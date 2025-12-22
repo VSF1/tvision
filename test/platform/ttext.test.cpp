@@ -1,14 +1,9 @@
 #define Uses_TText
 #include <tvision/tv.h>
-#include <tvision/internal/platform.h>
-#include <tvision/internal/unixcon.h>
 
 #include <test.h>
+#include <test_charops.h>
 #include <stdlib.h>
-
-#define COMBINING_ZIGZAG_UTF8 "\xCD\x9B"
-#define COMBINING_ZIGZAG_UTF32 U"\u035B"
-#define ZERO_WIDTH_JOINER_UTF8 "\xE2\x80\x8D"
 
 static std::ostream &operator<<(std::ostream &os, TSpan<const char32_t> span)
 {
@@ -26,46 +21,97 @@ static std::ostream &operator<<(std::ostream &os, TSpan<const char32_t> span)
     return os;
 }
 
-static bool mustSkipTTextTests = false;
-
-#if !defined(_WIN32)
-
-// On Unix, the 'wcwidth' function might be used to determine character widths.
-// The behaviour of this function depends on the current locale, so we need
-// to check if a UTF-8 locale is being used.
-TEST(TText, Utf8LocaleIsBeingUsed)
+TEST(TText, ShouldConvertUtf8ToCodePage)
 {
-    // 'Platform::charWidth' initializes the locale when first invoked.
-    tvision::Platform::charWidth(L'\0');
-    // Then, ensure the UnixConsoleAdapter implementation is used, which
-    // relies on 'wcwidth'.
-    tvision::Platform::charWidth = &tvision::UnixConsoleAdapter::charWidth;
+    static const TestCase<TStringView, char> testCases[] =
+    {
+        {{}, '\0'},
+        {{"\0", 1}, '\0'},
+        {"a", 'a'},
+        {"○", '\t'},
+        {"\t", '\t'},
+        {"≡", '\xF0'},
+        {"€", '\0'},
+    };
 
-    TStringView input = "☺";
-    wchar_t actual = L'\0';
-
-    // If the locale is right, this should convert from UTF-8 into UTF-32.
-    mbtowc(&actual, &input[0], input.size());
-
-    wchar_t expected = L'☺';
-    bool localeIsUtf8 = (actual == expected);
-    EXPECT_TRUE(localeIsUtf8) <<
-        "\nIMPORTANT!\n"
-        "A UTF-8 locale is required to run these tests. Please specify a valid "
-        "UTF-8 locale using the LC_CTYPE or LC_ALL environment variable. The "
-        "command 'locale -a' may provide you with a list of available locales.";
-
-    // If the locale is wrong, there is no point in running the other tests.
-    mustSkipTTextTests = !localeIsUtf8;
+    for (auto &testCase : testCases)
+    {
+        auto actual = TText::toCodePage(testCase.input);
+        expectResultMatches(actual, testCase);
+    }
 }
 
-#endif // _WIN32
+TEST(TText, ShouldConvertCodePageToUtf8)
+{
+    static const TestCase<char, TStringView> testCases[] =
+    {
+        {'\0', {"\0", 1}},
+        {'a', "a"},
+        {'\t', "○"},
+        {'\xF0', "≡"},
+    };
+
+    for (auto &testCase : testCases)
+    {
+        auto actual = TText::fromCodePage(testCase.input);
+        expectResultMatches(actual, testCase);
+    }
+}
+
+TEST(TText, ShouldOverrideCodePageTranslation)
+{
+    char customCodepageToUtf8[256][4] = {};
+    memcpy(customCodepageToUtf8[0x10], "¥", 2); // ASCII position.
+    memcpy(customCodepageToUtf8[0x80], "\U00010000", 4); // non-ASCII position, 4 bytes in UTF-8.
+
+    TText::setCodePageTranslation(&customCodepageToUtf8);
+
+    static const TestCase<TStringView, char> toCodePageTestCases[] =
+    {
+        {"¥", '\x10'},
+        {"\x10", '\x10'},
+        {"\x20", '\x20'},
+        {"\U00010000", '\x80'},
+    };
+
+    for (auto &testCase : toCodePageTestCases)
+    {
+        auto actual = TText::toCodePage(testCase.input);
+        expectResultMatches(actual, testCase);
+    }
+
+    static const TestCase<char, TStringView> fromCodePageTestCases[] =
+    {
+        {'\x10', "¥"},
+        {'\x20', {"\0", 1}},
+        {'\x80', "\U00010000"},
+    };
+
+    for (auto &testCase : fromCodePageTestCases)
+    {
+        auto actual = TText::fromCodePage(testCase.input);
+        expectResultMatches(actual, testCase);
+    }
+
+    TText::setCodePageTranslation(nullptr);
+
+    static const TestCase<char, TStringView> backToDefaultTestCases[] =
+    {
+        {'\x10', "►"},
+        {'\x20', " "},
+        {'\x80', "Ç"},
+    };
+
+    for (auto &testCase : backToDefaultTestCases)
+    {
+        auto actual = TText::fromCodePage(testCase.input);
+        expectResultMatches(actual, testCase);
+    }
+}
 
 TEST(TText, ShouldConvertUtf8ControlCharacters)
 {
-    if (mustSkipTTextTests)
-        GTEST_SKIP();
-
+    TestCharOps::init();
     static const TestCase<TStringView> testCases[] =
     {
         {{"\0", 1}, {"\0", 1}},
@@ -83,8 +129,7 @@ TEST(TText, ShouldConvertUtf8ControlCharacters)
     for (auto &testCase : testCases)
     {
         TScreenCell cells[1] {};
-        size_t i = 0, j = 0;
-        while(TText::drawOne(cells, i, testCase.input, j));
+        TText::drawStr(cells, testCase.input);
         TStringView actual = cells[0]._ch.getText();
         expectResultMatches(actual, testCase);
     }
@@ -92,9 +137,7 @@ TEST(TText, ShouldConvertUtf8ControlCharacters)
 
 TEST(TText, ShouldConvertUtf32ControlCharacters)
 {
-    if (mustSkipTTextTests)
-        GTEST_SKIP();
-
+    TestCharOps::init();
     static const TestCase<TSpan<const char32_t>, TStringView> testCases[] =
     {
         {{U"\0", 1}, {"\0", 1}},
@@ -113,8 +156,7 @@ TEST(TText, ShouldConvertUtf32ControlCharacters)
     {
         TScreenCell cells[1] {};
         TSpan<const uint32_t> input {(const uint32_t *) testCase.input.data(), testCase.input.size()};
-        size_t i = 0, j = 0;
-        while(TText::drawOne(cells, i, input, j));
+        TText::drawStr(cells, 0, input, 0);
         TStringView actual = cells[0]._ch.getText();
         expectResultMatches(actual, testCase);
     }
@@ -122,10 +164,8 @@ TEST(TText, ShouldConvertUtf32ControlCharacters)
 
 TEST(TText, ShouldDrawTextInScreenCells)
 {
-    if (mustSkipTTextTests)
-        GTEST_SKIP();
-
     enum { nCells = 2 };
+    TestCharOps::init();
     static const TestCase<TStringView, std::vector<TStringView>> testCases[] =
     {
         {"a", {"a", {"\0", 1}}},
@@ -135,13 +175,13 @@ TEST(TText, ShouldDrawTextInScreenCells)
         {{"\0a", 2}, {{"\0", 1}, "a"}},
         {"a" COMBINING_ZIGZAG_UTF8, {"a" COMBINING_ZIGZAG_UTF8, {"\0", 1}}},
         {{"\0" COMBINING_ZIGZAG_UTF8, 3}, {" " COMBINING_ZIGZAG_UTF8, {"\0", 1}}},
-        {"क्"  ZERO_WIDTH_JOINER_UTF8 "ष", {"क्", "ष"}},
+        {"क" DEVANAGARI_VIRAMA_UTF8 ZERO_WIDTH_JOINER_UTF8 "ष", {"क" DEVANAGARI_VIRAMA_UTF8, "ष"}},
     };
 
     for (auto &testCase : testCases)
     {
         TScreenCell cells[nCells] {};
-        TText::drawStr(cells, 0, testCase.input, 0);
+        TText::drawStr(cells, testCase.input);
 
         std::vector<TStringView> actual(nCells);
         for (int i = 0; i < nCells; ++i)

@@ -83,18 +83,28 @@ class Platform
     bool sizeChanged(TEvent &ev) noexcept;
     ConsoleAdapter &createConsole() noexcept;
 
-    static int initAndGetCharWidth(uint32_t) noexcept;
-    static void initEncodingStuff() noexcept;
+    static void initLocale() noexcept;
+    static void initCharOps() noexcept;
+    static int initCharWidth(uint32_t) noexcept;
+    static uint32_t initCharToLower(uint32_t) noexcept;
+
     static void signalCallback(bool) noexcept;
 
 public:
-
-    static int (*charWidth)(uint32_t) noexcept;
 
     // Platform is a singleton. It gets created by THardwareInfo, but it is
     // never destroyed so that secondary threads may keep invoking methods such
     // as 'interruptEventWait'.
     static Platform &getInstance() noexcept;
+
+    // Character processing functions which may depend on the C locale or other
+    // system resources. If they are used before the Platform instance has been
+    // created, they perform the required initializations automatically.
+    static struct CharOps
+    {
+        int (*width)(uint32_t) noexcept;
+        uint32_t (*toLower)(uint32_t) noexcept;
+    } charOps;
 
     // Note: explicit 'this' required by GCC 5.
     void setUpConsole() noexcept
@@ -122,8 +132,7 @@ public:
         { console.lock([&] (auto *c) { displayBuf.flushScreen(c->display); }); }
     TScreenCell *reloadScreenInfo() noexcept
         { return console.lock([&] (auto *c) { return displayBuf.reloadScreenInfo(c->display); }); }
-    void freeScreenBuffer() noexcept
-        { displayBuf.~DisplayBuffer(); new (&displayBuf) DisplayBuffer; }
+    void freeScreenBuffer() noexcept { displayBuf.reset(); }
 
     bool setClipboardText(TStringView text) noexcept
         { return console.lock([&] (auto *c) { return c->setClipboardText(text); }); }
