@@ -409,9 +409,9 @@ public:
     virtual void endModal( ushort command );
     virtual ushort execute();
 
-    TAttrPair getColor( ushort color ) noexcept;
+    TAttrPair getColor( ushort color );
     virtual TPalette& getPalette() const;
-    virtual TColorAttr mapColor( uchar ) noexcept;
+    virtual TColorAttr mapColor( uchar );
 
     Boolean getState( ushort aState ) const noexcept;
     void select();
@@ -464,7 +464,7 @@ public:
     TGroup *owner;
 
     static Boolean _NEAR showMarkers;
-    static uchar _NEAR errorAttr;
+    static TColorAttr _NEAR errorAttr;
 
     virtual void shutDown();
 
@@ -518,13 +518,13 @@ inline opstream& operator << ( opstream& os, TView* cl )
 inline void TView::writeBuf( short x, short y, short w, short h,
                              const TDrawBuffer& b ) noexcept
 {
-    writeBuf( x, y, min(w, short(b.length() - x)), h, &b.data[0] );
+    writeBuf( x, y, min(w, short(b.capacity - x)), h, &b.data[0] );
 }
 
 inline void TView::writeLine( short x, short y, short w, short h,
                               const TDrawBuffer& b ) noexcept
 {
-    writeLine( x, y, min(w, short(b.length() - x)), h, &b.data[0] );
+    writeLine( x, y, min(w, short(b.capacity - x)), h, &b.data[0] );
 }
 
 #endif  // Uses_TView
@@ -756,6 +756,17 @@ inline opstream& operator << ( opstream& os, TScroller* cl )
     { return os << (TStreamable *)cl; }
 
 #endif  // Uses_TScroller
+
+/* ---------------------------------------------------------------------- */
+/*      class TListViewer                                                 */
+/*                                                                        */
+/*      Palette layout                                                    */
+/*        1 = Active                                                      */
+/*        2 = Inactive                                                    */
+/*        3 = Focused                                                     */
+/*        4 = Selected                                                    */
+/*        5 = Divider                                                     */
+/* ---------------------------------------------------------------------- */
 
 #if defined( Uses_TListViewer ) && !defined( __TListViewer )
 #define __TListViewer
